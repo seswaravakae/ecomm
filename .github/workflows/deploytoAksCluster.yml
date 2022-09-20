@@ -1,0 +1,50 @@
+on: [push]
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    
+    - uses: azure/docker-login@v1
+      with:
+        login-server: myaksclusterregistry11.azurecr.io
+        username: ${{ secrets.acr_myaksclusterregistry11_username }}
+        password: ${{ secrets.acr_myaksclusterregistry11_password }}
+    
+    - name: Build and push image to ACR
+      id: build-image
+      run: |
+        docker build "$GITHUB_WORKSPACE/https://github.com/seswaravakae/ecomm.git" -f  "var/www" -t myaksclusterregistry11.azurecr.io/myakscluster:${{ github.sha }} --label dockerfile-path=var/www
+        docker push myaksclusterregistry11.azurecr.io/myakscluster:${{ github.sha }}
+    
+    - uses: azure/k8s-set-context@v1
+      with:
+         kubeconfig: ${{ secrets.aks_myakscluster_kubeConfig }}
+      id: login
+    
+    - name: Create namespace
+      run: |
+        namespacePresent=`kubectl get namespace | grep ecomm | wc -l`
+        if [ $namespacePresent -eq 0 ]
+        then
+            echo `kubectl create namespace ecomm`
+        fi
+
+    - uses: azure/k8s-create-secret@v1
+      with:
+        namespace: ecomm
+        container-registry-url: myaksclusterregistry11.azurecr.io
+        container-registry-username: ${{ secrets.acr_myaksclusterregistry11_username }}
+        container-registry-password: ${{ secrets.acr_myaksclusterregistry11_password }}
+        secret-name: myaksclusterdockerauth
+       
+    - uses: azure/k8s-deploy@v1.2
+      with:
+        namespace: ecomm
+        manifests: |
+          manifests/deployment.yml
+          manifests/service.yml
+        images: |
+          myaksclusterregistry11.azurecr.io/myakscluster:${{ github.sha }}
+        imagepullsecrets: |
+          myaksclusterdockerauth
